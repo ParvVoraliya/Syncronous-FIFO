@@ -1,49 +1,55 @@
-module FIFO#(
-  parameter DATA_WIDTH = 8,  // Width of the data
-  parameter DEPTH = 8       // Depth of the FIFO
+module sync_fifo #(
+    parameter DATA_WIDTH = 8,
+    parameter DEPTH      = 16
 )(
-  input clk,
-  input rst,
-  input wr,
-  input rd,
-  input [DATA_WIDTH-1:0] din,
-  output reg [DATA_WIDTH-1:0] dout,
-  output empty,
-  output full
+    input clk,rst,rd_en,wr_en,
+    input      [DATA_WIDTH-1:0] din,
+    output reg [DATA_WIDTH-1:0] dout,
+    output full,empty
 );
 
-  // Pointers for write and read operations
-  reg [$clog2(DEPTH):0] wptr = 0, rptr = 0;
+    localparam ADDR_WIDTH = $clog2(DEPTH);
 
-  // Counter for tracking the number of elements in the FIFO
-  reg [$clog2(DEPTH+1):0] cnt = 0;
+    // Extra bit is used for full/empty detection
+    reg [ADDR_WIDTH:0] rd_ptr;
+    reg [ADDR_WIDTH:0] wr_ptr;
 
-  // Memory array to store data
-  reg [DATA_WIDTH-1:0] mem [DEPTH-1:0];
+    reg [DATA_WIDTH-1:0] fifo [0:DEPTH-1];
 
-  always @(posedge clk or negedge rst) begin
-    if (!rst) begin
-      // Reset the pointers and counter when the reset signal is asserted
-      wptr <= 0;
-      rptr <= 0;
-      cnt  <= 0;
-    end
-    else if (wr && !full) begin
-      // Write data to the FIFO if it's not full
-      mem[wptr] <= din;
-      wptr      <= wptr + 1;
-      cnt       <= cnt + 1;
-    end
-    else if (rd && !empty) begin
-      // Read data from the FIFO if it's not empty
-      dout <= mem[rptr];
-      rptr <= rptr + 1;
-      cnt  <= cnt - 1;
-    end
+    // Simultaneous read conditions
+    wire simult_rw_when_full = full && rd_en && wr_en;
+    // simultabeous write condition
+    wire simult_rw_when_empty = empty && rd_en && wr_en;
+  
+    // Allow read/write
+    wire wr_allowed = (!full) || simult_rw_when_full;
+    wire rd_allowed = (!empty) || simult_rw_when_empty;
+   
+    // FIFO operation
+    always @(posedge clk) begin
+     if (rst) begin
+            dout   <= {DATA_WIDTH{1'b0}};
+            rd_ptr <= {(ADDR_WIDTH+1){1'b0}};
+            wr_ptr <= {(ADDR_WIDTH+1){1'b0}};
+     end
+
+      else begin
+        if (rd_en && rd_allowed ) begin  //rd operation
+                rd_ptr <= rd_ptr + 1'b1;
+                if (simult_rw_when_empty || simult_rw_when_full)
+                    dout <= din;
+                else
+                    dout <= fifo[rd_ptr[ADDR_WIDTH-1:0]];
+            end
+          
+          if (wr_en && wr_allowed) begin   //write opration
+                fifo[wr_ptr[ADDR_WIDTH-1:0]] <= din;
+                wr_ptr <= wr_ptr + 1'b1;
+          end
+      end
   end
-
-  // Determine if the FIFO is empty or full
-  assign empty = (cnt == 0);
-  assign full  = (cnt == DEPTH);
+  
+  assign empty = (rd_ptr == wr_ptr);  // empty condition
+  assign full  = (rd_ptr == {~wr_ptr[ADDR_WIDTH],wr_ptr[ADDR_WIDTH-1:0]});  // full condition 
 
 endmodule
